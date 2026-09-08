@@ -1,0 +1,79 @@
+{
+  "accuracy": 0.921,
+  "macro_f1": 0.9115,
+  "class_names": {
+    "1": "Spruce/Fir",
+    "2": "Lodgepole Pine",
+    "3": "Ponderosa Pine",
+    "4": "Cottonwood/Willow",
+    "5": "Aspen",
+    "6": "Douglas-fir",
+    "7": "Krummholz"
+  },
+  "classification_report": "                   precision    recall  f1-score   support\n\n       Spruce/Fir     0.9241    0.8926    0.9081     42368\n   Lodgepole Pine     0.9139    0.9426    0.9280     56661\n   Ponderosa Pine     0.9388    0.9483    0.9435      7151\nCottonwood/Willow     0.8998    0.8670    0.8831       549\n            Aspen     0.9215    0.7909    0.8512      1899\n      Douglas-fir     0.9140    0.8963    0.9051      3473\n        Krummholz     0.9674    0.9559    0.9616      4102\n\n         accuracy                         0.9210    116203\n        macro avg     0.9256    0.8991    0.9115    116203\n     weighted avg     0.9211    0.9210    0.9207    116203\n",
+  "confusion_matrix": [
+    [
+      37817,
+      4419,
+      0,
+      0,
+      14,
+      4,
+      114
+    ],
+    [
+      2933,
+      53408,
+      125,
+      0,
+      107,
+      70,
+      18
+    ],
+    [
+      0,
+      140,
+      6781,
+      35,
+      6,
+      189,
+      0
+    ],
+    [
+      0,
+      0,
+      51,
+      476,
+      0,
+      22,
+      0
+    ],
+    [
+      5,
+      362,
+      22,
+      0,
+      1502,
+      8,
+      0
+    ],
+    [
+      4,
+      93,
+      244,
+      18,
+      1,
+      3113,
+      0
+    ],
+    [
+      165,
+      16,
+      0,
+      0,
+      0,
+      0,
+      3921
+    ]
+  ]
+}

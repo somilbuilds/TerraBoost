@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cover Type Explorer — ML Terrain Classifier</title>
+    <meta name="description" content="Interactive grid map visualizing real-time XGBoost predictions on the UCI Covertype dataset. Every cell is a 54-feature vector classified into 7 forest cover types.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/index.css">
+</head>
+<body>
+    <!-- Header -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo-icon">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                    <path d="M14 2L2 8v12l12 6 12-6V8L14 2z" stroke="url(#g1)" stroke-width="2" fill="none"/>
+                    <path d="M14 8l-6 3v6l6 3 6-3v-6l-6-3z" fill="url(#g1)" opacity="0.3"/>
+                    <defs><linearGradient id="g1" x1="0" y1="0" x2="28" y2="28">
+                        <stop offset="0%" stop-color="#4ADE80"/>
+                        <stop offset="100%" stop-color="#22D3EE"/>
+                    </linearGradient></defs>
+                </svg>
+            </div>
+            <div class="header-text">
+                <h1>Cover Type Explorer</h1>
+                <span class="subtitle">UCI Covertype · XGBoost Classifier · 54 Features</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="seed-display" id="seed-display">Seed: —</div>
+            <button id="btn-about-model" class="btn-primary" style="background:#5a6478;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                About Model
+            </button>
+            <button id="btn-new-map" class="btn-primary">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 8a7 7 0 0 1 13.2-3.2M15 8a7 7 0 0 1-13.2 3.2"/>
+                    <path d="M14.2 1v4h-4M1.8 15v-4h4"/>
+                </svg>
+                New Map
+            </button>
+        </div>
+    </header>
+
+    <!-- Main layout -->
+    <main id="app-main">
+        <!-- Map area -->
+        <section id="map-section">
+            <div id="canvas-wrapper">
+                <canvas id="grid-canvas"></canvas>
+                <div id="loading-overlay">
+                    <div class="spinner"></div>
+                    <span>Generating terrain…</span>
+                </div>
+                <div id="tooltip"></div>
+            </div>
+
+            <!-- Legend -->
+            <div id="legend">
+                <h3>Terrain Overview</h3>
+                <div id="legend-items">
+                    <div class="legend-item"><span class="legend-swatch" style="background:#228B22"></span>Valleys</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#8B4513"></span>Mid Slopes</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#696969"></span>High Peaks</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#D3D3D3"></span>Snow Caps</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#1470A0"></span>Water</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#6B6B6B"></span>Road</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Side panel -->
+        <aside id="side-panel">
+            <div id="panel-empty">
+                <div class="empty-icon">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+                        <rect x="4" y="4" width="40" height="40" rx="4"/>
+                        <path d="M16 20h16M16 28h10"/>
+                        <circle cx="12" cy="20" r="2" fill="currentColor"/>
+                        <circle cx="12" cy="28" r="2" fill="currentColor"/>
+                    </svg>
+                </div>
+                <p>Click any cell on the map to inspect its feature vector and model prediction.</p>
+            </div>
+
+            <div id="panel-content" class="hidden">
+                <!-- Tree image (for land cells with predicted cover type) -->
+                <div id="tree-image-section" class="panel-section hidden">
+                    <img id="tree-image" src="" alt="" class="tree-preview-img">
+                    <div id="tree-image-caption"></div>
+                </div>
+
+                <!-- Cell type header -->
+                <div id="panel-header">
+                    <div id="cell-type-badge"></div>
+                    <div id="cell-coords"></div>
+                </div>
+
+                <!-- Prediction result -->
+                <div id="prediction-section" class="panel-section">
+                    <h4>Prediction</h4>
+                    <div id="predicted-class"></div>
+                    <div id="probability-bars"></div>
+                </div>
+
+                <!-- Feature vector -->
+                <div id="features-section" class="panel-section">
+                    <h4>Feature Vector <span class="feature-count">(54 dimensions)</span></h4>
+
+                    <div class="feature-group">
+                        <h5>Continuous Features</h5>
+                        <table id="continuous-features">
+                            <thead><tr><th>Feature</th><th>Value</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+
+                    <div class="feature-group">
+                        <h5>Wilderness Area (one-hot)</h5>
+                        <div id="wilderness-chips"></div>
+                    </div>
+
+                    <div class="feature-group">
+                        <h5>Soil Type (one-hot)</h5>
+                        <div id="soil-chips"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Water/Road info -->
+            <div id="panel-simple" class="hidden">
+                <div id="simple-icon"></div>
+                <div id="simple-label"></div>
+                <p id="simple-desc"></p>
+            </div>
+        </aside>
+    </main>
+
+    <!-- About Modal -->
+    <div id="about-modal" class="modal hidden">
+        <div class="modal-content glass-panel">
+            <button id="close-modal-btn" class="close-btn">&times;</button>
+            <h2>Model Performance & Info</h2>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px; font-size: 0.9rem; color: var(--text-secondary);"><strong>Cover Type Explorer</strong> visualizes the UCI Covertype dataset problem. The machine learning model uses 54 cartographic variables (such as elevation, slope, soil type, and distance to hydrology/roads) to predict the dominant forest tree type.</p>
+                <p style="margin-bottom: 12px; font-size: 0.9rem; color: var(--text-secondary);">This web app procedurally generates terrain modeled after these actual cartographic scales. The map you see focuses solely on topography. Only when you click a cell, those 54 generated parameters are fed real-time into the XGBoost classifier to perform the prediction.</p>
+                <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 24px 0;" />
+                <h3 style="color: var(--accent-cyan); font-size: 0.95rem; margin-bottom: 10px;">XGBoost Training Metrics</h3>
+                <div id="modal-metrics">
+                    <p style="color:#888; font-size: 0.85rem;">Loading metrics from server...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/index.js"></script>
+</body>
+</html>

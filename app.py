@@ -65,6 +65,33 @@ async def api_predict(req: PredictRequest):
     }
 
 
+class BatchPredictRequest(BaseModel):
+    vectors: list[list[float]]
+
+
+@app.post("/api/batch_predict")
+async def api_batch_predict(req: BatchPredictRequest):
+    """Batch predict cover types for multiple feature vectors (lazy legend highlighting)."""
+    if model is None:
+        return {"error": "Model not loaded."}
+
+    X = np.array(req.vectors, dtype=np.float32)
+    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+    preds = model.predict(X)
+    probas = model.predict_proba(X)
+
+    from map_generator import CLASS_NAMES
+    predictions = []
+    for i in range(len(preds)):
+        cls = int(preds[i])
+        predictions.append({
+            "cover_type": cls,
+            "cover_name": CLASS_NAMES[cls],
+            "probabilities": {CLASS_NAMES[j]: round(float(probas[i][j]), 4) for j in range(7)},
+        })
+    return {"predictions": predictions}
+
+
 @app.get("/api/metrics")
 async def api_metrics():
     """Return model performance metrics."""

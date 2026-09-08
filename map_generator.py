@@ -10,7 +10,7 @@ import numpy as np
 from collections import deque
 
 # ── Constants ────────────────────────────────────────────────────────────────
-GRID_W, GRID_H = 60, 60
+GRID_W, GRID_H = 100, 75
 ELEVATION_MIN, ELEVATION_MAX = 1859, 3858
 
 CLASS_NAMES = {
@@ -111,82 +111,71 @@ def generate_elevation_field(w, h, seed):
 # ── Water generation ─────────────────────────────────────────────────────────
 
 def generate_water(w, h, seed):
-    """Generates a guaranteed water body (river or lake) for realistic hydrology features."""
+    """Generates a single organic pond."""
     rng = random.Random(seed + 1000)
     water_cells = set()
     depth_map = {}
 
-    # Force a river starting from one edge and meandering across
-    edges = [(0, rng.randint(10, w-10)), (h-1, rng.randint(10, w-10)), 
-             (rng.randint(10, h-10), 0), (rng.randint(10, h-10), w-1)]
-    start = rng.choice(edges)
+    cr = rng.randint(10, h - 10)
+    cc = rng.randint(10, w - 10)
     
-    cr, cc = start
-    # Aim for the center, then wander
-    steps = rng.randint(80, 150)
-    path = [(cr, cc)]
+    target_size = rng.randint(40, 90)
+    queue = [(cr, cc)]
+    water_cells.add((cr, cc))
     
-    # Base direction towards the center
-    dr = 1 if cr == 0 else (-1 if cr == h-1 else rng.choice([-1, 0, 1]))
-    dc = 1 if cc == 0 else (-1 if cc == w-1 else rng.choice([-1, 0, 1]))
+    while queue and len(water_cells) < target_size:
+        idx = rng.randint(0, len(queue) - 1)
+        r, c = queue.pop(idx)
+        
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            if rng.random() > 0.3:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in water_cells:
+                    water_cells.add((nr, nc))
+                    queue.append((nr, nc))
 
-    for _ in range(steps):
-        # Heavy momentum to keep the river flowing, plus random wandering
-        if rng.random() < 0.4:
-            dr = dr + rng.choice([-1, 0, 1])
-            dc = dc + rng.choice([-1, 0, 1])
-        dr = max(-1, min(1, dr))
-        dc = max(-1, min(1, dc))
-        if dr == 0 and dc == 0:
-            dr = rng.choice([-1, 1])
-            
-        cr = max(0, min(h - 1, cr + dr))
-        cc = max(0, min(w - 1, cc + dc))
-        path.append((cr, cc))
+    # Simple depth mapping based on surrounding water cells
+    for r, c in water_cells:
+        neighbors = sum(1 for dr, dc in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,1),(-1,1),(1,-1)] 
+                        if (r+dr, c+dc) in water_cells)
+        depth_map[(r, c)] = neighbors / 8.0  # 1.0 if totally surrounded
 
-    # Thicken path to create a body (0 means 1 pixel wide, 1 means 3 pixels wide)
-    thickness = rng.randint(0, 1)
-    for pr, pc in path:
-        for dr in range(-thickness, thickness + 1):
-            for dc in range(-thickness, thickness + 1):
-                if dr * dr + dc * dc <= thickness * thickness:
-                    nr, nc = pr + dr, pc + dc
-                    if 0 <= nr < h and 0 <= nc < w:
-                        water_cells.add((nr, nc))
-
-    # Compute depth as distance from edge of water body
-    if water_cells:
-        max_depth = 0
-        for r, c in water_cells:
-            # depth = min distance to a non-water neighbor
-            min_d = float('inf')
-            for dr in range(-thickness, thickness + 1):
-                for dc in range(-thickness, thickness + 1):
-                    nr, nc = r + dr, c + dc
-                    if (nr, nc) not in water_cells or not (0 <= nr < h and 0 <= nc < w):
-                        d = math.sqrt((r - nr) ** 2 + (c - nc) ** 2)
-                        min_d = min(min_d, d)
-            if math.isinf(min_d):
-                min_d = thickness + 1.0
-            depth_map[(r, c)] = min_d
-            max_depth = max(max_depth, min_d)
-        # Normalize depth 0-1
-        if max_depth > 0:
-            for k in depth_map:
-                depth_map[k] /= max_depth
-
-    return water_cells, depth_map
+    return water_cells, depth_map, []
 
 
 # ── Road generation ──────────────────────────────────────────────────────────
 
-def generate_road(w, h, seed):
-    """With ~45% probability, draws a road line (Bresenham) between two edge points."""
+def _bresenham(r0, c0, r1, c1, h, w):
+    """Bresenham's line between two points; returns set of (r,c) cells."""
+    cells = set()
+    dr = abs(r1 - r0)
+    dc = abs(c1 - c0)
+    sr = 1 if r0 < r1 else -1
+    sc = 1 if c0 < c1 else -1
+    err = dr - dc
+    r, c = r0, c0
+    while True:
+        if 0 <= r < h and 0 <= c < w:
+            cells.add((r, c))
+        if r == r1 and c == c1:
+            break
+        e2_val = 2 * err
+        if e2_val > -dc:
+            err -= dc
+            r += sr
+        if e2_val < dr:
+            err += dr
+            c += sc
+    return cells
+
+
+def generate_road(w, h, seed, elevation=None):
+    """With ~45% probability, draws a road with terrain-aware waypoints."""
     rng = random.Random(seed + 2000)
     road_cells = set()
 
     if rng.random() > 0.45:
-        return road_cells
+        return road_cells, []
 
     # Pick two random points on different edges
     edges = ['top', 'bottom', 'left', 'right']
@@ -205,27 +194,50 @@ def generate_road(w, h, seed):
     r0, c0 = edge_point(e1)
     r1, c1 = edge_point(e2)
 
-    # Bresenham's line
-    dr = abs(r1 - r0)
-    dc = abs(c1 - c0)
-    sr = 1 if r0 < r1 else -1
-    sc = 1 if c0 < c1 else -1
-    err = dr - dc
-    r, c = r0, c0
-    while True:
-        if 0 <= r < h and 0 <= c < w:
-            road_cells.add((r, c))
-        if r == r1 and c == c1:
-            break
-        e2_val = 2 * err
-        if e2_val > -dc:
-            err -= dc
-            r += sr
-        if e2_val < dr:
-            err += dr
-            c += sc
+    # Generate terrain-aware intermediate waypoints
+    n_waypoints = rng.randint(3, 5)
+    waypoints = [(r0, c0)]
 
-    return road_cells
+    for i in range(1, n_waypoints + 1):
+        t = i / (n_waypoints + 1)
+        # Lerp between start and end
+        base_r = int(r0 + t * (r1 - r0))
+        base_c = int(c0 + t * (c1 - c0))
+
+        # If elevation data available, nudge toward lower-slope neighborhood
+        if elevation is not None:
+            best_r, best_c = base_r, base_c
+            best_elev = float('inf')
+            search_r = max(5, h // 10)
+            search_c = max(5, w // 10)
+            # Sample a small neighborhood for lower elevation (easier terrain)
+            for dr in range(-search_r, search_r + 1, max(1, search_r // 3)):
+                for dc in range(-search_c, search_c + 1, max(1, search_c // 3)):
+                    nr, nc = base_r + dr, base_c + dc
+                    if 0 <= nr < h and 0 <= nc < w:
+                        # Prefer lower elevation = easier terrain for road
+                        e = elevation[nr, nc]
+                        if e < best_elev:
+                            best_elev = e
+                            best_r, best_c = nr, nc
+            waypoints.append((best_r, best_c))
+        else:
+            # Small random jitter if no elevation available
+            jitter_r = rng.randint(-h // 8, h // 8)
+            jitter_c = rng.randint(-w // 8, w // 8)
+            nr = max(0, min(h - 1, base_r + jitter_r))
+            nc = max(0, min(w - 1, base_c + jitter_c))
+            waypoints.append((nr, nc))
+
+    waypoints.append((r1, c1))
+
+    # Build road_cells by tracing Bresenham between consecutive waypoints
+    for i in range(len(waypoints) - 1):
+        wr0, wc0 = waypoints[i]
+        wr1, wc1 = waypoints[i + 1]
+        road_cells |= _bresenham(wr0, wc0, wr1, wc1, h, w)
+
+    return road_cells, waypoints
 
 
 # ── Distance computation (BFS) ──────────────────────────────────────────────
@@ -332,13 +344,32 @@ def generate_map(seed, model=None):
     elevation = generate_elevation_field(w, h, seed)
 
     # 2. Water
-    water_cells, depth_map = generate_water(w, h, seed)
+    water_cells, depth_map, water_path = generate_water(w, h, seed)
 
     # 3. Road
-    road_cells = generate_road(w, h, seed)
+    road_cells, road_waypoints = generate_road(w, h, seed, elevation)
 
-    # Remove road cells that overlap water
+    # Road is 1 cell wide to prevent it looking huge
+    road_edge_cells = set()
+
+    # Enforce 5-cell minimum separation: discard road if any road cell is <5 from water
+    if road_cells and water_cells:
+        too_close = False
+        for rr, rc in road_cells:
+            for wr, wc in water_cells:
+                if abs(rr - wr) + abs(rc - wc) < 5:
+                    too_close = True
+                    break
+            if too_close:
+                break
+        if too_close:
+            road_cells = set()
+            road_edge_cells = set()
+            road_waypoints = []
+
+    # Remove road cells that overlap water (safety net)
     road_cells -= water_cells
+    road_edge_cells -= water_cells
 
     # 4. Distance fields
     if water_cells:
@@ -369,103 +400,112 @@ def generate_map(seed, model=None):
 
     for r in range(h):
         for c in range(w):
-            if (r, c) in water_cells:
-                depth = depth_map.get((r, c), 0.5)
-                t = depth
-                dr_c, dg_c, db_c = int(WATER_COLOR_DEEP[1:3], 16), int(WATER_COLOR_DEEP[3:5], 16), int(WATER_COLOR_DEEP[5:7], 16)
-                sr_c, sg_c, sb_c = int(WATER_COLOR_SHALLOW[1:3], 16), int(WATER_COLOR_SHALLOW[3:5], 16), int(WATER_COLOR_SHALLOW[5:7], 16)
-                cr_v = int(sr_c + t * (dr_c - sr_c))
-                cg_v = int(sg_c + t * (dg_c - sg_c))
-                cb_v = int(sb_c + t * (db_c - sb_c))
-                color = f"#{cr_v:02x}{cg_v:02x}{cb_v:02x}"
-                cells.append({
-                    "r": r, "c": c, "type": "water",
-                    "depth": round(depth, 2), "color": color
-                })
-            elif (r, c) in road_cells:
-                cells.append({
-                    "r": r, "c": c, "type": "road", "color": ROAD_COLOR
-                })
+            elev = float(elevation[r, c])
+            slope, aspect = compute_slope_aspect(elevation, r, c, h, w)
+
+            h_dist_hydro = float(dist_to_water[r, c]) * 30.0
+            min_wd = float(dist_to_water[r, c]) if water_cells else 0.0
+            v_dist_hydro = float(elev - ELEVATION_MIN) * (min_wd / max(1, h + w)) * 0.1 if water_cells else 0.0
+
+            h_dist_road = float(dist_to_road[r, c]) * 30.0
+            h_dist_fire = multi_octave_noise(c, r, fire_seed, octaves=2, scale=20.0) * 6000.0
+
+            hs_9am = compute_hillshade(slope, aspect, azimuth_deg=135, altitude_deg=45)
+            hs_noon = compute_hillshade(slope, aspect, azimuth_deg=180, altitude_deg=60)
+            hs_3pm = compute_hillshade(slope, aspect, azimuth_deg=225, altitude_deg=45)
+
+            wa = [0, 0, 0, 0]
+            wa[wilderness_zones[r, c]] = 1
+
+            st = [0] * 40
+            soil_idx = zone_to_soil[soil_zone_map[r, c]]
+            st[soil_idx] = 1
+
+            features = [
+                round(elev, 1), round(aspect, 1), round(slope, 1),
+                round(h_dist_hydro, 1), round(v_dist_hydro, 1), round(h_dist_road, 1),
+                hs_9am, hs_noon, hs_3pm, round(h_dist_fire, 1),
+            ] + wa + st
+
+            # Topographic color mapping based on elevation
+            t = (elev - ELEVATION_MIN) / (ELEVATION_MAX - ELEVATION_MIN)
+            t = max(0, min(1, t))
+            
+            is_water = (r, c) in water_cells
+            is_road = (r, c) in road_cells
+
+            # Organic, sharp topography colors
+            if t < 0.2:
+                # Forest Green
+                r_c = 40 + (t / 0.2) * (15)
+                g_c = 90 + (t / 0.2) * (20)
+                b_c = 50 + (t / 0.2) * (15)
+            elif t < 0.45:
+                # Lush Yellow-Green
+                t_sub = (t - 0.2) / 0.25
+                r_c = 55 + t_sub * (65)
+                g_c = 110 + t_sub * (40)
+                b_c = 65 - t_sub * (25)
+            elif t < 0.7:
+                # Tan / Brown
+                t_sub = (t - 0.45) / 0.25
+                r_c = 120 + t_sub * (40)
+                g_c = 150 - t_sub * (40)
+                b_c = 40 + t_sub * (10)
+            elif t < 0.85:
+                # Dark Rock
+                t_sub = (t - 0.7) / 0.15
+                r_c = 160 - t_sub * (50)
+                g_c = 110 - t_sub * (10)
+                b_c = 50 + t_sub * (50)
             else:
-                elev = float(elevation[r, c])
-                slope, aspect = compute_slope_aspect(elevation, r, c, h, w)
-
-                h_dist_hydro = float(dist_to_water[r, c]) * 30.0
-                min_wd = float(dist_to_water[r, c]) if water_cells else 0.0
-                v_dist_hydro = float(elev - ELEVATION_MIN) * (min_wd / max(1, h + w)) * 0.1 if water_cells else 0.0
-
-                h_dist_road = float(dist_to_road[r, c]) * 30.0
-                h_dist_fire = multi_octave_noise(c, r, fire_seed, octaves=2, scale=20.0) * 6000.0
-
-                hs_9am = compute_hillshade(slope, aspect, azimuth_deg=135, altitude_deg=45)
-                hs_noon = compute_hillshade(slope, aspect, azimuth_deg=180, altitude_deg=60)
-                hs_3pm = compute_hillshade(slope, aspect, azimuth_deg=225, altitude_deg=45)
-
-                wa = [0, 0, 0, 0]
-                wa[wilderness_zones[r, c]] = 1
-
-                st = [0] * 40
-                soil_idx = zone_to_soil[soil_zone_map[r, c]]
-                st[soil_idx] = 1
-
-                features = [
-                    round(elev, 1), round(aspect, 1), round(slope, 1),
-                    round(h_dist_hydro, 1), round(v_dist_hydro, 1), round(h_dist_road, 1),
-                    hs_9am, hs_noon, hs_3pm, round(h_dist_fire, 1),
-                ] + wa + st
-
-                # Topographic color mapping based on elevation
-                t = (elev - ELEVATION_MIN) / (ELEVATION_MAX - ELEVATION_MIN)
-                t = max(0, min(1, t))
+                # Snow peaks
+                t_sub = (t - 0.85) / 0.15
+                r_c = 110 + t_sub * (130)
+                g_c = 100 + t_sub * (140)
+                b_c = 100 + t_sub * (140)
                 
-                # Organic, sharp topography colors
-                if t < 0.2:
-                    # Forest Green
-                    r_c = 40 + (t / 0.2) * (15)
-                    g_c = 90 + (t / 0.2) * (20)
-                    b_c = 50 + (t / 0.2) * (15)
-                elif t < 0.45:
-                    # Lush Yellow-Green
-                    t_sub = (t - 0.2) / 0.25
-                    r_c = 55 + t_sub * (65)
-                    g_c = 110 + t_sub * (40)
-                    b_c = 65 - t_sub * (25)
-                elif t < 0.7:
-                    # Tan / Brown
-                    t_sub = (t - 0.45) / 0.25
-                    r_c = 120 + t_sub * (40)
-                    g_c = 150 - t_sub * (40)
-                    b_c = 40 + t_sub * (10)
-                elif t < 0.85:
-                    # Dark Rock
-                    t_sub = (t - 0.7) / 0.15
-                    r_c = 160 - t_sub * (50)
-                    g_c = 110 - t_sub * (10)
-                    b_c = 50 + t_sub * (50)
+            is_water = (r, c) in water_cells
+            is_road = (r, c) in road_cells
+
+            # Mutate local palette color for water and road so they share the same aesthetic scale
+            if is_water:
+                depth = depth_map.get((r, c), 0.5)
+                # Share identical palette as the local terrain block, subtly shifted towards deep teal
+                # The deeper it is, the darker the current terrain color becomes.
+                r_c = max(0, r_c - 15 - (depth * 25))
+                g_c = max(0, g_c - 5 - (depth * 15))
+                b_c = min(255, b_c + 10 + (depth * 15))
+            elif is_road:
+                # Modify local palette towards a dusty/worn dirt color
+                if (r, c) in road_edge_cells:
+                    r_c = min(255, r_c + 5)
+                    g_c = max(0, g_c - 10)
+                    b_c = max(0, b_c - 15)
                 else:
-                    # Snow peaks
-                    t_sub = (t - 0.85) / 0.15
-                    r_c = 110 + t_sub * (130)
-                    g_c = 100 + t_sub * (140)
-                    b_c = 100 + t_sub * (140)
-                
-                # Apply hillshade for highly defined 3D effect (sharp peaks/valleys)
-                shade_factor = hs_noon / 255.0
-                shade_mapped = 0.3 + (shade_factor * 1.1)  # Higher contrast
-                
-                fr = min(255, max(0, int(r_c * shade_mapped)))
-                fg = min(255, max(0, int(g_c * shade_mapped)))
-                fb = min(255, max(0, int(b_c * shade_mapped)))
-                hex_color = f"#{fr:02x}{fg:02x}{fb:02x}"
+                    r_c = min(255, r_c + 15)
+                    g_c = max(0, g_c - 5)
+                    b_c = max(0, b_c - 10)
+            
+            # Universal hillshade application
+            shade_factor = hs_noon / 255.0
+            shade_mapped = 0.3 + (shade_factor * 1.1)  # Higher contrast
+            
+            fr = min(255, max(0, int(r_c * shade_mapped)))
+            fg = min(255, max(0, int(g_c * shade_mapped)))
+            fb = min(255, max(0, int(b_c * shade_mapped)))
+            hex_color = f"#{fr:02x}{fg:02x}{fb:02x}"
 
-                cell_data = {
-                    "r": r, "c": c, "type": "land",
-                    "features": {name: val for name, val in zip(FEATURE_NAMES, features)},
-                    "feature_vector": features,
-                    "color": hex_color,
-                    "elevation_score": t
-                }
-                cells.append(cell_data)
+            cell_data = {
+                "r": r, "c": c, "type": "land",
+                "features": {name: val for name, val in zip(FEATURE_NAMES, features)},
+                "feature_vector": features,
+                "color": hex_color,
+                "elevation_score": t,
+                "is_water": is_water,
+                "is_road": is_road
+            }
+            cells.append(cell_data)
 
     return {
         "grid_width": w,

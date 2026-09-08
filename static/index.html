@@ -31,6 +31,10 @@
         </div>
         <div class="header-right">
             <div class="seed-display" id="seed-display">Seed: —</div>
+            <button id="btn-calculate" class="btn-primary" style="background:#8b5cf6;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+                Calculate
+            </button>
             <button id="btn-about-model" class="btn-primary" style="background:#5a6478;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                 About Model
@@ -87,26 +91,13 @@
             </div>
 
             <div id="panel-content" class="hidden">
-                <!-- Tree image (for land cells with predicted cover type) -->
-                <div id="tree-image-section" class="panel-section hidden">
-                    <img id="tree-image" src="" alt="" class="tree-preview-img">
-                    <div id="tree-image-caption"></div>
-                </div>
-
                 <!-- Cell type header -->
                 <div id="panel-header">
                     <div id="cell-type-badge"></div>
                     <div id="cell-coords"></div>
                 </div>
 
-                <!-- Prediction result -->
-                <div id="prediction-section" class="panel-section">
-                    <h4>Prediction</h4>
-                    <div id="predicted-class"></div>
-                    <div id="probability-bars"></div>
-                </div>
-
-                <!-- Feature vector -->
+                <!-- Feature vector (shown FIRST) -->
                 <div id="features-section" class="panel-section">
                     <h4>Feature Vector <span class="feature-count">(54 dimensions)</span></h4>
 
@@ -127,6 +118,19 @@
                         <h5>Soil Type (one-hot)</h5>
                         <div id="soil-chips"></div>
                     </div>
+                </div>
+
+                <!-- Tree image (for land cells with predicted cover type) -->
+                <div id="tree-image-section" class="panel-section hidden">
+                    <img id="tree-image" src="" alt="" class="tree-preview-img">
+                    <div id="tree-image-caption"></div>
+                </div>
+
+                <!-- Prediction result (after features) -->
+                <div id="prediction-section" class="panel-section">
+                    <h4>Model Prediction</h4>
+                    <div id="predicted-class"></div>
+                    <div id="probability-bars"></div>
                 </div>
             </div>
 
@@ -152,6 +156,19 @@
                 <div id="modal-metrics">
                     <p style="color:#888; font-size: 0.85rem;">Loading metrics from server...</p>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calculate Modal -->
+    <div id="chart-modal" class="modal hidden">
+        <div class="modal-content glass-panel" style="max-width: 500px; text-align: center;">
+            <button id="close-chart-btn" class="close-btn">&times;</button>
+            <h2 style="margin-bottom: 20px;">Cover Type Distribution</h2>
+            <div class="modal-body">
+                <canvas id="pie-chart-canvas" width="300" height="300" style="margin: 0 auto; display: block;"></canvas>
+                <div id="pie-chart-legend" style="margin-top: 25px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;"></div>
+                <p id="chart-loading-text" style="color:var(--accent-cyan); font-size: 0.9rem; display: none; margin-top:20px;">Computing AI predictions for entire map... Please wait.</p>
             </div>
         </div>
     </div>

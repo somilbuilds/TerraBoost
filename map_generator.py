@@ -96,52 +96,112 @@ def multi_octave_noise(x, y, seed, octaves=4, persistence=0.5, scale=8.0):
 # ── Elevation field ──────────────────────────────────────────────────────────
 
 def generate_elevation_field(w, h, seed):
-    """Returns a 2D numpy array of elevation values in [ELEVATION_MIN, ELEVATION_MAX]."""
+    """Build a natural-looking height field from warped multi-scale noise.
+
+    The broad octave creates continental-scale hills; finer octaves add
+    terrain detail. Ridged noise creates connected mountain chains instead
+    of evenly distributed, blobby peaks.
+    """
     field = np.zeros((h, w), dtype=np.float32)
+    span = float(ELEVATION_MAX - ELEVATION_MIN)
+
     for r in range(h):
         for c in range(w):
-            # Increased scale (40.0) for larger, chunkier terrain features
-            # Applied a slight curve for wider valleys and sharper peaks
-            n = multi_octave_noise(c, r, seed, octaves=4, persistence=0.45, scale=40.0)
-            n = n ** 1.3
-            field[r, c] = ELEVATION_MIN + n * (ELEVATION_MAX - ELEVATION_MIN)
-    return field
+            # Low-frequency domain warp bends otherwise obvious noise contours.
+            warp_x = (multi_octave_noise(c + 83, r - 41, seed + 71, octaves=3, scale=34.0) - 0.5) * 13.0
+            warp_y = (multi_octave_noise(c - 29, r + 67, seed + 97, octaves=3, scale=34.0) - 0.5) * 13.0
+            x, y = c + warp_x, r + warp_y
 
+            broad = multi_octave_noise(x, y, seed + 101, octaves=4, persistence=0.52, scale=48.0)
+            detail = multi_octave_noise(x, y, seed + 211, octaves=5, persistence=0.48, scale=15.0)
+            ridge_raw = multi_octave_noise(x, y, seed + 307, octaves=4, persistence=0.52, scale=25.0)
+            ridges = 1.0 - abs(2.0 * ridge_raw - 1.0)
+
+            # Favor broad valleys, with ridges concentrated in uplands.
+            n = 0.57 * broad + 0.22 * detail + 0.21 * (ridges * (0.35 + 0.65 * broad))
+            n = max(0.0, min(1.0, n))
+            n = n ** 1.18
+            field[r, c] = ELEVATION_MIN + n * span
+
+    # A tiny smoothing pass removes isolated one-cell spikes while retaining detail.
+    padded = np.pad(field, 1, mode="edge")
+    field = (
+        padded[1:-1, 1:-1] * 0.40
+        + (padded[:-2, 1:-1] + padded[2:, 1:-1] + padded[1:-1, :-2] + padded[1:-1, 2:]) * 0.10
+        + (padded[:-2, :-2] + padded[:-2, 2:] + padded[2:, :-2] + padded[2:, 2:]) * 0.05
+    ).astype(np.float32)
+    return field
 
 # ── Water generation ─────────────────────────────────────────────────────────
 
-def generate_water(w, h, seed):
-    """Generates a single organic pond."""
+def generate_water(w, h, seed, elevation=None):
+    """Derive a small lake and winding stream from the generated height field."""
     rng = random.Random(seed + 1000)
+    if elevation is None:
+        elevation = generate_elevation_field(w, h, seed)
+
     water_cells = set()
     depth_map = {}
+    min_r, min_c = np.unravel_index(int(np.argmin(elevation)), elevation.shape)
+    min_height = float(elevation[min_r, min_c])
+    relief = max(1.0, float(np.percentile(elevation, 92) - np.percentile(elevation, 8)))
 
-    cr = rng.randint(10, h - 10)
-    cc = rng.randint(10, w - 10)
-    
-    target_size = rng.randint(40, 90)
-    queue = [(cr, cc)]
-    water_cells.add((cr, cc))
-    
-    while queue and len(water_cells) < target_size:
-        idx = rng.randint(0, len(queue) - 1)
-        r, c = queue.pop(idx)
-        
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            if rng.random() > 0.3:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in water_cells:
-                    water_cells.add((nr, nc))
-                    queue.append((nr, nc))
+    # Flood a compact, irregular basin around the lowest point. Elevation,
+    # rather than a random walk, controls the shoreline.
+    lake_limit = min_height + relief * rng.uniform(0.035, 0.065)
+    queue = deque([(int(min_r), int(min_c))])
+    water_cells.add((int(min_r), int(min_c)))
+    while queue and len(water_cells) < int(w * h * 0.035):
+        r, c = queue.popleft()
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in water_cells:
+                if float(elevation[nr, nc]) <= lake_limit:
+                    # Slight deterministic shoreline breakup, without isolated speckles.
+                    if rng.random() > 0.10:
+                        water_cells.add((nr, nc))
+                        queue.append((nr, nc))
 
-    # Simple depth mapping based on surrounding water cells
+    # Trace a stream from an upland source toward the lowest map edge. At each
+    # step choose a downhill neighbor, preferring progress toward the outlet.
+    edge_cells = []
+    edge_cells.extend((0, c) for c in range(w))
+    edge_cells.extend((h - 1, c) for c in range(w))
+    edge_cells.extend((r, 0) for r in range(h))
+    edge_cells.extend((r, w - 1) for r in range(h))
+    outlet = min(edge_cells, key=lambda p: float(elevation[p[0], p[1]]))
+    source = max(((r, c) for r in range(2, h - 2, 3) for c in range(2, w - 2, 3)),
+                 key=lambda p: float(elevation[p[0], p[1]]))
+    r, c = source
+    visited = set()
+    for _ in range(w * h):
+        if (r, c) in visited:
+            break
+        visited.add((r, c))
+        water_cells.add((r, c))
+        if abs(r - outlet[0]) <= 1 and abs(c - outlet[1]) <= 1:
+            break
+        candidates = []
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited:
+                distance = math.hypot(outlet[0] - nr, outlet[1] - nc)
+                # Elevation dominates; the small distance term avoids endless local wandering.
+                score = float(elevation[nr, nc]) + relief * 0.0015 * distance
+                candidates.append((score, nr, nc))
+        if not candidates:
+            break
+        _, r, c = min(candidates)
+
+    # Give water a subtly varied edge/depth value for rendering.
     for r, c in water_cells:
-        neighbors = sum(1 for dr, dc in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,1),(-1,1),(1,-1)] 
-                        if (r+dr, c+dc) in water_cells)
-        depth_map[(r, c)] = neighbors / 8.0  # 1.0 if totally surrounded
+        neighbors = sum(
+            1 for dr, dc in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,1),(-1,1),(1,-1)]
+            if (r + dr, c + dc) in water_cells
+        )
+        depth_map[(r, c)] = neighbors / 8.0
 
     return water_cells, depth_map, []
-
 
 # ── Road generation ──────────────────────────────────────────────────────────
 
@@ -344,7 +404,7 @@ def generate_map(seed, model=None):
     elevation = generate_elevation_field(w, h, seed)
 
     # 2. Water
-    water_cells, depth_map, water_path = generate_water(w, h, seed)
+    water_cells, depth_map, water_path = generate_water(w, h, seed, elevation)
 
     # 3. Road
     road_cells, road_waypoints = generate_road(w, h, seed, elevation)
@@ -427,73 +487,49 @@ def generate_map(seed, model=None):
                 hs_9am, hs_noon, hs_3pm, round(h_dist_fire, 1),
             ] + wa + st
 
-            # Topographic color mapping based on elevation
-            t = (elev - ELEVATION_MIN) / (ELEVATION_MAX - ELEVATION_MIN)
-            t = max(0, min(1, t))
-            
+            # Satellite-inspired natural land palette: deep evergreen lowlands,
+            # olive mixed forest, muted alpine rock, and pale high ridges.
+            t = max(0.0, min(1.0, (elev - ELEVATION_MIN) / (ELEVATION_MAX - ELEVATION_MIN)))
             is_water = (r, c) in water_cells
             is_road = (r, c) in road_cells
 
-            # Organic, sharp topography colors
-            if t < 0.2:
-                # Forest Green
-                r_c = 40 + (t / 0.2) * (15)
-                g_c = 90 + (t / 0.2) * (20)
-                b_c = 50 + (t / 0.2) * (15)
-            elif t < 0.45:
-                # Lush Yellow-Green
-                t_sub = (t - 0.2) / 0.25
-                r_c = 55 + t_sub * (65)
-                g_c = 110 + t_sub * (40)
-                b_c = 65 - t_sub * (25)
-            elif t < 0.7:
-                # Tan / Brown
-                t_sub = (t - 0.45) / 0.25
-                r_c = 120 + t_sub * (40)
-                g_c = 150 - t_sub * (40)
-                b_c = 40 + t_sub * (10)
-            elif t < 0.85:
-                # Dark Rock
-                t_sub = (t - 0.7) / 0.15
-                r_c = 160 - t_sub * (50)
-                g_c = 110 - t_sub * (10)
-                b_c = 50 + t_sub * (50)
+            palette = [
+                (0.00, (24, 55, 39)),
+                (0.18, (36, 78, 48)),
+                (0.36, (57, 91, 49)),
+                (0.52, (91, 103, 65)),
+                (0.67, (111, 105, 84)),
+                (0.80, (133, 128, 116)),
+                (0.91, (166, 164, 151)),
+                (1.00, (211, 210, 198)),
+            ]
+            for idx in range(len(palette) - 1):
+                t0, c0 = palette[idx]
+                t1, c1 = palette[idx + 1]
+                if t <= t1:
+                    blend = (t - t0) / max(1e-6, t1 - t0)
+                    base_rgb = [c0[k] + (c1[k] - c0[k]) * blend for k in range(3)]
+                    break
             else:
-                # Snow peaks
-                t_sub = (t - 0.85) / 0.15
-                r_c = 110 + t_sub * (130)
-                g_c = 100 + t_sub * (140)
-                b_c = 100 + t_sub * (140)
-                
-            is_water = (r, c) in water_cells
-            is_road = (r, c) in road_cells
+                base_rgb = list(palette[-1][1])
 
-            # Mutate local palette color for water and road so they share the same aesthetic scale
+            # Moisture follows valley position; deterministic fine variation
+            # adds forest canopy texture without drawing a visible grid.
+            moisture = 1.0 - t
+            texture = (multi_octave_noise(c * 1.7, r * 1.7, seed + 9000, octaves=2, scale=5.0) - 0.5) * 0.16
+            shade = 0.68 + 0.62 * (hs_noon / 255.0)
+            shade += texture
+            fr, fg, fb = [int(max(0, min(255, channel * shade))) for channel in base_rgb]
+
             if is_water:
-                depth = depth_map.get((r, c), 0.5)
-                # Share identical palette as the local terrain block, subtly shifted towards deep teal
-                # The deeper it is, the darker the current terrain color becomes.
-                r_c = max(0, r_c - 15 - (depth * 25))
-                g_c = max(0, g_c - 5 - (depth * 15))
-                b_c = min(255, b_c + 10 + (depth * 15))
+                depth = depth_map.get((r, c), 0.45)
+                # Deep blue-green water with a lighter shallow shoreline.
+                fr = int(13 + (1.0 - depth) * 13)
+                fg = int(66 + (1.0 - depth) * 28)
+                fb = int(91 + (1.0 - depth) * 34)
             elif is_road:
-                # Modify local palette towards a dusty/worn dirt color
-                if (r, c) in road_edge_cells:
-                    r_c = min(255, r_c + 5)
-                    g_c = max(0, g_c - 10)
-                    b_c = max(0, b_c - 15)
-                else:
-                    r_c = min(255, r_c + 15)
-                    g_c = max(0, g_c - 5)
-                    b_c = max(0, b_c - 10)
-            
-            # Universal hillshade application
-            shade_factor = hs_noon / 255.0
-            shade_mapped = 0.3 + (shade_factor * 1.1)  # Higher contrast
-            
-            fr = min(255, max(0, int(r_c * shade_mapped)))
-            fg = min(255, max(0, int(g_c * shade_mapped)))
-            fb = min(255, max(0, int(b_c * shade_mapped)))
+                fr, fg, fb = 151, 130, 99
+
             hex_color = f"#{fr:02x}{fg:02x}{fb:02x}"
 
             cell_data = {

@@ -515,7 +515,6 @@ def generate_map(seed, model=None):
 
             # Moisture follows valley position; deterministic fine variation
             # adds forest canopy texture without drawing a visible grid.
-            moisture = 1.0 - t
             texture = (multi_octave_noise(c * 1.7, r * 1.7, seed + 9000, octaves=2, scale=5.0) - 0.5) * 0.16
             shade = 0.68 + 0.62 * (hs_noon / 255.0)
             shade += texture

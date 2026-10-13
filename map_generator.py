@@ -412,22 +412,8 @@ def generate_map(seed, model=None):
     # Road is 1 cell wide to prevent it looking huge
     road_edge_cells = set()
 
-    # Enforce 5-cell minimum separation: discard road if any road cell is <5 from water
-    if road_cells and water_cells:
-        too_close = False
-        for rr, rc in road_cells:
-            for wr, wc in water_cells:
-                if abs(rr - wr) + abs(rc - wc) < 5:
-                    too_close = True
-                    break
-            if too_close:
-                break
-        if too_close:
-            road_cells = set()
-            road_edge_cells = set()
-            road_waypoints = []
-
-    # Remove road cells that overlap water (safety net)
+    # Roads may follow valleys and pass near water, but never paint over the water itself.
+    # The previous all-or-nothing distance rule often removed an otherwise good road.
     road_cells -= water_cells
     road_edge_cells -= water_cells
 

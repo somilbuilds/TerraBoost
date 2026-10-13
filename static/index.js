@@ -109,43 +109,65 @@ function renderGrid() {
     if (!mapData) return;
     const { grid_width, grid_height } = mapData;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Paint a true low-resolution terrain raster first, then scale it with
+    // interpolation. This removes the visible checkerboard of individual cells
+    // while keeping the existing grid data and click coordinates intact.
+    const terrain = document.createElement('canvas');
+    terrain.width = grid_width;
+    terrain.height = grid_height;
+    const terrainCtx = terrain.getContext('2d');
+    const raster = terrainCtx.createImageData(grid_width, grid_height);
 
-    // 1. Draw all terrain cells
     for (let r = 0; r < grid_height; r++) {
         for (let c = 0; c < grid_width; c++) {
             const cell = cellGrid[r][c];
             if (!cell) continue;
+            const hex = cell.color || '#405746';
+            const offset = (r * grid_width + c) * 4;
+            raster.data[offset] = parseInt(hex.slice(1, 3), 16);
+            raster.data[offset + 1] = parseInt(hex.slice(3, 5), 16);
+            raster.data[offset + 2] = parseInt(hex.slice(5, 7), 16);
+            raster.data[offset + 3] = 255;
+        }
+    }
+    terrainCtx.putImageData(raster, 0, 0);
 
-            const x = c * cellSize;
-            const y = r * cellSize;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(terrain, 0, 0, canvas.width, canvas.height);
 
-            ctx.fillStyle = cell.color;
-            ctx.fillRect(x, y, cellSize, cellSize);
-
-            // Dim cells not matching highlighted type (from lazy batch)
-            if (highlightedType !== null && batchPredictions) {
+    // Dim non-matching cover classes after a batch prediction has been requested.
+    if (highlightedType !== null && batchPredictions) {
+        for (let r = 0; r < grid_height; r++) {
+            for (let c = 0; c < grid_width; c++) {
                 const pred = batchPredictions[`${r},${c}`];
-                if (pred && pred.cover_name !== highlightedType) {
-                    ctx.fillStyle = 'rgba(10, 13, 20, 0.6)';
+                if (!pred) continue;
+                const x = c * cellSize;
+                const y = r * cellSize;
+                if (pred.cover_name !== highlightedType) {
+                    ctx.fillStyle = 'rgba(10, 13, 20, 0.62)';
                     ctx.fillRect(x, y, cellSize, cellSize);
-                } else if (pred && pred.cover_name === highlightedType) {
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                } else {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
                     ctx.lineWidth = 1;
                     ctx.strokeRect(x + 0.5, y + 0.5, cellSize - 1, cellSize - 1);
                 }
             }
-
-            // Selected cell outline
-            if (selectedCell && selectedCell.r === r && selectedCell.c === c) {
-                ctx.strokeStyle = '#FBBF24';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
-            }
         }
     }
-}
 
+    if (selectedCell) {
+        ctx.strokeStyle = '#FBBF24';
+        ctx.lineWidth = Math.max(1.5, cellSize * 0.35);
+        ctx.strokeRect(
+            selectedCell.c * cellSize + 1,
+            selectedCell.r * cellSize + 1,
+            Math.max(1, cellSize - 2),
+            Math.max(1, cellSize - 2)
+        );
+    }
+}
 
 // ── Legend (lazy batch prediction) ─────────────────────────────────────────
 const CLASS_NAMES_LIST = [

@@ -64,6 +64,9 @@ async function fetchMap(seed) {
         selectedCell = null;
         highlightedType = null;
         batchPredictions = null;  // Reset lazy cache on new map
+        highlightedType = null;
+        document.getElementById('cover-type-results').classList.add('hidden');
+        document.getElementById('cover-type-list').innerHTML = '';
     } catch (err) {
         console.error('Failed to generate map:', err);
     } finally {
@@ -617,6 +620,7 @@ async function openPieChart() {
 
     drawAnimatedPieChart(slices, total);
     buildPieLegend(slices, total);
+    buildCoverTypeList(slices, total);
 }
 
 
@@ -716,4 +720,56 @@ function buildPieLegend(slices, total) {
         `;
         pieLegend.appendChild(item);
     }
+}
+
+
+function buildCoverTypeList(slices, total) {
+    const results = document.getElementById('cover-type-results');
+    const list = document.getElementById('cover-type-list');
+    results.classList.remove('hidden');
+    list.innerHTML = '';
+
+    const heading = document.getElementById('cover-type-results-count');
+    heading.textContent = `${total.toLocaleString()} land cells · Select a cover type to highlight it on the map`;
+
+    for (const slice of slices) {
+        const pct = ((slice.count / total) * 100).toFixed(1);
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'cover-type-item';
+        item.dataset.coverType = slice.name;
+        item.innerHTML = `
+            <span class="cover-type-swatch" style="background:${slice.color}"></span>
+            <span class="cover-type-name">${slice.name}</span>
+            <span class="cover-type-stats">
+                <strong>${slice.count.toLocaleString()}</strong>
+                <small>${pct}%</small>
+            </span>
+        `;
+        item.setAttribute('aria-pressed', 'false');
+        item.addEventListener('click', () => {
+            highlightedType = highlightedType === slice.name ? null : slice.name;
+            list.querySelectorAll('.cover-type-item').forEach(button => {
+                const active = button.dataset.coverType === highlightedType;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-pressed', String(active));
+            });
+            renderGrid();
+        });
+        list.appendChild(item);
+    }
+
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'cover-type-clear';
+    clear.textContent = 'Clear map highlight';
+    clear.addEventListener('click', () => {
+        highlightedType = null;
+        list.querySelectorAll('.cover-type-item').forEach(button => {
+            button.classList.remove('active');
+            button.setAttribute('aria-pressed', 'false');
+        });
+        renderGrid();
+    });
+    list.appendChild(clear);
 }

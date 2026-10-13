@@ -513,21 +513,42 @@ def generate_map(seed, model=None):
             else:
                 base_rgb = list(palette[-1][1])
 
-            # Moisture follows valley position; deterministic fine variation
-            # adds forest canopy texture without drawing a visible grid.
-            texture = (multi_octave_noise(c * 1.7, r * 1.7, seed + 9000, octaves=2, scale=5.0) - 0.5) * 0.16
-            shade = 0.68 + 0.62 * (hs_noon / 255.0)
+            # Layered hillshade and deterministic canopy variation create legible relief.
+            texture = (multi_octave_noise(c * 1.7, r * 1.7, seed + 9000, octaves=2, scale=5.0) - 0.5) * 0.22
+            shade = 0.62 + 0.72 * (hs_noon / 255.0)
             shade += texture
-            fr, fg, fb = [int(max(0, min(255, channel * shade))) for channel in base_rgb]
+            rgb = [int(max(0, min(255, channel * shade))) for channel in base_rgb]
+
+            # Moisture-rich margins transition into blue-green moss and reeds.
+            # Keep the tint narrow so the shoreline reads clearly without flooding the forest palette.
+            shore_dist = float(dist_to_water[r, c])
+            if not is_water and shore_dist <= 3.5:
+                wetness = max(0.0, (3.5 - shore_dist) / 3.5) * 0.34
+                wet_tone = (58, 116, 100)
+                rgb = [int(channel * (1.0 - wetness) + wet_tone[k] * wetness)
+                       for k, channel in enumerate(rgb)]
+
+            # Snow appears as irregular high-altitude patches, not a blanket over every ridge.
+            snow_noise = multi_octave_noise(c + 137, r - 59, seed + 7777, octaves=2, scale=7.5)
+            snow_coverage = max(0.0, min(0.78, (t - 0.84) * 4.8))
+            has_snow = t > 0.84 and snow_noise > (0.66 - snow_coverage * 0.34)
+            if has_snow and not is_water:
+                snow_strength = min(0.88, 0.42 + (t - 0.84) * 2.4)
+                snow_tone = (226, 232, 225)
+                rgb = [int(channel * (1.0 - snow_strength) + snow_tone[k] * snow_strength)
+                       for k, channel in enumerate(rgb)]
+
+            fr, fg, fb = rgb
 
             if is_water:
                 depth = depth_map.get((r, c), 0.45)
-                # Deep blue-green water with a lighter shallow shoreline.
-                fr = int(13 + (1.0 - depth) * 13)
-                fg = int(66 + (1.0 - depth) * 28)
-                fb = int(91 + (1.0 - depth) * 34)
+                # Blue-green water, with brighter turquoise shallows at the edge.
+                fr = int(12 + (1.0 - depth) * 18)
+                fg = int(64 + (1.0 - depth) * 38)
+                fb = int(88 + (1.0 - depth) * 42)
             elif is_road:
-                fr, fg, fb = 151, 130, 99
+                # The frontend adds a narrow dark shoulder and a warm gravel surface.
+                fr, fg, fb = 177, 151, 112
 
             hex_color = f"#{fr:02x}{fg:02x}{fb:02x}"
 

@@ -137,6 +137,51 @@ function renderGrid() {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(terrain, 0, 0, canvas.width, canvas.height);
 
+    // Draw roads as narrow, rounded gravel tracks with dark shoulders and a
+    // restrained center seam. Adjacency-based segments follow the generated route
+    // rather than drawing a straight line across the map.
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const roadCenters = [];
+    for (let r = 0; r < grid_height; r++) {
+        for (let c = 0; c < grid_width; c++) {
+            const cell = cellGrid[r][c];
+            if (!cell?.is_road) continue;
+            roadCenters.push([c * cellSize + cellSize / 2, r * cellSize + cellSize / 2, r, c]);
+        }
+    }
+    const roadSegments = [];
+    for (const [x, y, r, c] of roadCenters) {
+        for (const [nr, nc] of [[r, c + 1], [r + 1, c]]) {
+            if (nr < grid_height && nc < grid_width && cellGrid[nr][nc]?.is_road) {
+                roadSegments.push([x, y, nc * cellSize + cellSize / 2, nr * cellSize + cellSize / 2]);
+            }
+        }
+    }
+    // Underlay gives the road definition against both dark forest and pale rock.
+    ctx.strokeStyle = 'rgba(38, 34, 27, 0.78)';
+    ctx.lineWidth = Math.max(2, cellSize * 0.88);
+    for (const [x1, y1, x2, y2] of roadSegments) {
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    ctx.fillStyle = '#B7A078';
+    for (const [x, y] of roadCenters) {
+        ctx.beginPath(); ctx.arc(x, y, Math.max(1, cellSize * 0.28), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = '#B7A078';
+    ctx.lineWidth = Math.max(1, cellSize * 0.54);
+    for (const [x1, y1, x2, y2] of roadSegments) {
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(244, 224, 177, 0.62)';
+    ctx.lineWidth = Math.max(0.5, cellSize * 0.07);
+    ctx.setLineDash([Math.max(1, cellSize * 0.35), Math.max(1, cellSize * 0.4)]);
+    for (const [x1, y1, x2, y2] of roadSegments) {
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    ctx.restore();
+
     // Dim non-matching cover classes after a batch prediction has been requested.
     if (highlightedType !== null && batchPredictions) {
         for (let r = 0; r < grid_height; r++) {
@@ -426,7 +471,7 @@ function showRoadPanel(cell) {
     document.getElementById('simple-label').textContent = 'Road';
     document.getElementById('simple-label').style.color = '#9CA3AF';
     document.getElementById('simple-desc').textContent =
-        'This cell is near a road — not classified by the model. Roads are generated as straight lines across terrain.';
+        'This cell is near a road — not classified by the model. Roads are generated as winding, terrain-aware gravel tracks.';
 }
 
 

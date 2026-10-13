@@ -180,7 +180,7 @@ body {
 
 #grid-canvas {
     cursor: crosshair;
-    image-rendering: pixelated;
+    image-rendering: auto;
     transition: opacity var(--transition-med);
 }
 

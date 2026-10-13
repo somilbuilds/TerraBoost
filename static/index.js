@@ -137,39 +137,6 @@ function renderGrid() {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(terrain, 0, 0, canvas.width, canvas.height);
 
-    // Subtle elevation contours help communicate landform without overpowering
-    // the shaded-relief palette. They are drawn between height bands, not as a grid.
-    ctx.save();
-    ctx.strokeStyle = 'rgba(20, 27, 22, 0.19)';
-    ctx.lineWidth = Math.max(0.55, cellSize * 0.12);
-    const contourStep = 0.075;
-    for (let r = 0; r < grid_height - 1; r++) {
-        for (let c = 0; c < grid_width - 1; c++) {
-            const a = cellGrid[r][c];
-            const b = cellGrid[r][c + 1];
-            const d = cellGrid[r + 1][c];
-            if (!a || !b || !d) continue;
-            const levelA = Math.floor((a.elevation_score || 0) / contourStep);
-            const levelB = Math.floor((b.elevation_score || 0) / contourStep);
-            const levelD = Math.floor((d.elevation_score || 0) / contourStep);
-            const x = (c + 0.5) * cellSize;
-            const y = (r + 0.5) * cellSize;
-            if (levelA !== levelB) {
-                ctx.beginPath();
-                ctx.moveTo(x, y);
-                ctx.lineTo(x + cellSize, y);
-                ctx.stroke();
-            }
-            if (levelA !== levelD) {
-                ctx.beginPath();
-                ctx.moveTo(x, y);
-                ctx.lineTo(x, y + cellSize);
-                ctx.stroke();
-            }
-        }
-    }
-    ctx.restore();
-
     // Dim non-matching cover classes after a batch prediction has been requested.
     if (highlightedType !== null && batchPredictions) {
         for (let r = 0; r < grid_height; r++) {
